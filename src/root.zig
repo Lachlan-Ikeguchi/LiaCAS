@@ -1,10 +1,19 @@
 const std = @import("std");
 const testing = std.testing;
 
-export fn add(a: i32, b: i32) i32 {
-    return a + b;
-}
+pub const Sign = enum { positive, negative };
+pub const Coefficents = std.ArrayList;
 
-test "basic add functionality" {
-    try testing.expect(add(3, 7) == 10);
-}
+export const terms = struct {
+    sign: Sign,
+    coefficents: Coefficents,
+};
+
+export const expression = struct {
+    terms: std.ArrayList(terms),
+};
+
+export const equation = struct {
+    left: expression,
+    right: expression,
+};
