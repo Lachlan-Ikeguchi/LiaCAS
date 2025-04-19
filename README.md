@@ -1,1 +1,1 @@
-LiaCAS Is A Computer Algebra System
+LiaCAS is a Computer Algebra System
