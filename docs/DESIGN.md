@@ -1,8 +1,10 @@
 # LiaCAS — Design Document
 
 Status: living document (v0 draft). This is the blueprint that implementation
-work is built against. Decisions are recorded in §18; anything genuinely
-unsettled lives in §19.
+work is built against. The **reasoning behind each decision** — context,
+alternatives considered, and why — is recorded in
+[`DECISIONS.md`](DECISIONS.md) (ADR log). Anything genuinely unsettled lives
+in §19.
 
 ---
 
@@ -696,6 +698,9 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
 ---
 
 ## 18. Decisions log
+
+A summary table; the full reasoning for each decision lives in
+[`DECISIONS.md`](DECISIONS.md).
 
 | # | Decision | Resolution |
 |---|---|---|

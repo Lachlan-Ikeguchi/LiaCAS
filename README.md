@@ -3,8 +3,10 @@
 LiaCAS is a Computer Algebra System, written in Zig.
 
 - **Design document:** [`docs/DESIGN.md`](docs/DESIGN.md) — the blueprint
-  implementation is built against. Syntax, semantics, decisions log, and
-  worked traces all live there.
+  implementation is built against: syntax, semantics, and worked traces.
+- **Design rationale:** [`docs/DECISIONS.md`](docs/DECISIONS.md) — an ADR
+  log recording the context, alternatives, and reasoning behind each
+  decision, so the design can be understood from a local clone alone.
 - **Status:** design phase. The engine described in the design document is
   not implemented yet; `src/` currently holds the Zig project scaffold.
 
