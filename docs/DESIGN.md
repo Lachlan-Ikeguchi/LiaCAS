@@ -69,8 +69,13 @@ natural form:
 Everything typable stays ASCII: `sqrt`, `sin`, `cos`, `tan`, `log`, `exp`,
 `lim`, `abs`.
 
-**Command termination:** one space following a `\command` is consumed as the
-terminator (TeX behaviour). `\pm  b` therefore reads as `\pm b`.
+**Command termination is free (option 2).** A `\command` name ends at its
+first non-letter character (matched against the command table) — no
+semantic whitespace is ever consumed as a terminator. Spaces following a
+`\command` carry their full count and mean exactly what the same number of
+spaces means anywhere else. This holds in batch files and the REPL alike:
+`\pm 4` is plus-or-minus 4, and `\pm  b / 2 a` (double space) is
+`\pm (b/(2a))` (see §3.2).
 
 ### 3.2 Whitespace as an operator
 
@@ -94,32 +99,27 @@ Derived rules:
   glue.
 - **Numerator swallow.** Symmetrically, the numerator is a single-space
   product of the terms before the `/`: `a b / c` = `(a*b)/c`.
-- **REPL whitespace after `\commands`.** In the interactive frontend
-  (§14), the space situation after a `\command` is confusing because the
-  TeX terminator (§3.1) eats the first space. The REPL preprocesses
-  interactive input so typed spaces after a `\command` carry the batch
-  meaning of **one fewer** space — with one special case:
-  - `\pm 4` (one typed space) **auto-expands** to `\pm␣␣4` (double
-    space), which resolves to plus-or-minus 4 — in sign position, the
-    signed chunk `±4` (see below); in binary position, `x \pm 4`.
-  - A typed double space after a `\command` acts as a **single** space
-    — not the double space a user might expect.
-  - To get a semantic **double space** after a `\command` (e.g. the
-    `± numerator / denominator` case below), type a **triple** space.
-  Spaces not following a `\command` keep their batch meaning in the
-  REPL. Batch input is unaffected by all of this.
-- **Inert double space before additive operators.** In `thing  + term2` the
-  double space before the binary `+` is plain whitespace, *not* chunk
-  multiplication. (Otherwise every aligned formula would multiply.) A double
-  space only multiplies between two operands. The same holds **after** a
-  binary additive operator: `a \pm␣␣b` is just `a \pm b`.
-- **Signed chunks.** In **sign position** — at the start of an expression,
-  summand, or chunk — a double space after a sign operator (`-`, `+`, `\pm`)
-  forms a **signed chunk**: `\pm␣␣X` is the quantity `±X` as one unit,
-  usable as a numerator, denominator, or multiplicand without parentheses:
-  `\pm␣␣b / 2 a` = `(\pm b)/(2 a)`, whereas `\pm b / 2 a` =
-  `\pm (b/(2 a))`. (The values coincide — this is parenthesization
-  control over the printed tree.) `-␣␣b / 2 a` = `(-b)/(2 a)` likewise.
+- **Inert double space adjacent to additive operators.** In `thing  + term2`
+  the double space before the binary `+` is plain whitespace, *not* chunk
+  multiplication. (Otherwise every aligned formula would multiply.) The same
+  holds after a binary additive operator: `a \pm  b` is just `a \pm b`.
+  A double space multiplies only **between two operands** — with one
+  exception, below.
+- **Sign spacing.** In **sign position** (start of an expression, summand, or
+  chunk), spacing after a prefix sign (`-`, `+`, `\pm`) chooses the sign's
+  scope — more space, looser binding, mirroring spacing between operands:
+  - **Single space** — the sign binds the **first factor** of the following
+    numerator: `\pm b / 2 a` = `(\pm b)/(2 a)`; `\pm b c / 2 a` =
+    `((\pm b) c)/(2 a)`.
+  - **Double space** — the sign applies to the **whole next chunk**, as a
+    unit, fraction and all: `\pm  b / 2 a` = `\pm (b/(2 a))`. The sign's
+    scope is exactly the next chunk; a further double space ends it:
+    `\pm  b / 2 a  c` = `(\pm (b/(2 a))) * c`.
+  Both trees have the same value (sign distributes over `/` and `*`), so
+  this is tree-shape control, never a correctness question. The engine does
+  not normalize one into the other; conversion is a user rewrite rule.
+  The same rules hold for `-` and `+` in sign position. A sign followed by
+  end of input or a binary operator (`\pm  + 4`) is a parse error.
 - **`/` is left-associative:** `a / b / c` = `(a/b)/c`. Continued fractions
   need parentheses.
 - **`*` sits at level 5** with single space, so `a / b * c` = `a/(b*c)`.
@@ -277,7 +277,8 @@ relation    := summand { relop summand } ;
 summand     := chunk { ("+" | "-" | "\pm") chunk } ;
 chunk       := factor { "  " factor } ;                    -- double space
 factor      := numerator { "/" numerator } ;               -- left-assoc
-numerator   := term { (" " | "*") term } ;                 -- single-space product
+numerator   := sign term { (" " | "*") term } ;            -- single-space product
+sign        := "-" | "+" | "\pm" ;                      -- optional prefix sign
 term        := atom [ "^" term ] ;                         -- right-assoc power
 atom        := NUMBER | VARIABLE | "\command" | SETNAME
              | "(" expr ")" | FUNC "(" expr { "," expr } ")"
@@ -295,6 +296,39 @@ Notes:
   it; see §17).
 - Unary minus: `-x` is a negation atom at the summand position; `a - b` is
   binary subtraction.
+- A summand may open with a sign applied to its **whole first chunk** via
+  a double space (`\pm  b / 2 a` = `\pm (b/(2 a))`), distinct from the
+  `sign` inside `numerator` (§3.2).
+
+### 5.1 Whitespace semantics: bracket desugaring
+
+The formal meaning of §3.2's spacing rules is a desugaring pass over the
+lexed token stream. Whitespace runs are tagged SS (single space, including
+`*`) and DS (double space). Two bracket kinds are inserted, one per level:
+
+- **Chunk brackets `[ ]`** (level 3): DS inserts `] [` between operands.
+  An implicit `[` opens at the start of each summand, `]` at its end.
+- **Fraction brackets `( )`** (level 4): each `/` inserts `) / (`. They are
+  **contained within one chunk**: the numerator reaches back only to the
+  nearest chunk boundary, the denominator extends forward only to the next
+  one.
+
+```
+r␣␣b / 2 a     ->  [r] [ (b) / (2a) ]       ->  r * (b/(2a))
+a / b␣␣thing    ->  [ (a)/(b) ] [thing]       ->  (a/b) * thing
+a b / c        ->  [ (a b)/(c) ]            ->  (a*b)/c
+```
+
+Inertness rules: DS adjacent to a binary additive operator (either side) is
+dropped. A chunk that consists solely of signs cannot stand alone: the sign
+applies to the **whole next chunk** — `\pm␣␣b / 2 a` -> `[\pm] [(b)/(2a)]`
+-> `\pm(b/(2a))` — and the sign's scope is exactly that one chunk (`\pm␣␣b / 2 a␣␣c` -> `(\pm(b/(2a))) * c`). A chunk opening with `/` has an
+implicit numerator of `1`: `a␣␣/ b` -> `[a] [(1)/(b)]` -> `a * (1/b)`.
+
+The **implementation** is a whitespace-aware precedence-climbing parser
+whose recursion levels are these brackets; no token mutation happens at
+runtime. The desugaring is kept as the testable specification: tests run
+both paths and require identical trees.
 
 ---
 
@@ -646,8 +680,7 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
 5. Batch frontend: header/prompt protocol, `include` with globs and
    idempotent loading, round-trippable renderer.
 6. REPL wrapper: internal-header model, `include`, `definitions`/
-   `definitions <symbol>`, `clear`/`clear <symbol>`, `save`, and the
-   post-`\command` whitespace shift (§3.2).
+   `definitions <symbol>`, `clear`/`clear <symbol>`, `save`.
 
 **Planned, later (same interfaces, bigger engines):**
 
@@ -676,7 +709,7 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
 | 8 | Rule interaction | Fixpoint application, deterministic, one result, step cap; rules normalize through existing rules at definition time (§9). |
 | 9 | Function parameters | Explicit `$` only; no implicit pattern variables (§3.5, §9). |
 | 10 | Identifiers | Multi-letter variables allowed (letter runs, `_` subscript enumeration like `m_1`); reserved words and digits-after-letter excluded (`2a6` = `2*a*6` still holds) (§3.4). |
-| 11 | Whitespace hierarchy | Double space = chunk multiplication; `/` swallows single-space products; `*` at single-space level; `/` left-assoc; `^` right-assoc; double space inert before `+`/`-` (§3.2). |
+| 11 | Whitespace hierarchy | Double space = chunk multiplication; `/` takes single-space products on both sides; `*` at single-space level; `/` left-assoc; `^` right-assoc; DS inert adjacent to binary additive operators; formal semantics = bracket desugaring (§3.2, §5.1). |
 | 12 | Numbers | Maximal digit runs; juxtaposition = multiplication (`2a6` = `2*a*6`); no scientific notation (§3.3). |
 | 13 | ASCII policy | `\commands` only for non-typable symbols; `->`, `>=`, `<=`, `!=` ASCII (§3.1). |
 | 14 | Sets | `NATURAL` (contains 0), `INTEGER`, `RATIONAL`, `REAL`, `COMPLEX`, `PRIME`, `BOOLEAN` (§8). |
@@ -685,8 +718,10 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
 | 17 | Output | Full store, round-trippable, stdout; errors stderr + exit codes (§12, §13). |
 | 18 | REPL QOL | `include`, `definitions`/`definitions <symbol>`, `clear`/`clear <symbol>`, `save <path>`; internal-header model (§14). |
 | 19 | Includes | Idempotent via loaded-file tracking; re-include/cycle is a no-op; `clear` resets tracking (§4). |
-| 20 | REPL whitespace | After a `\command`, typed spaces carry the meaning of one fewer space; `\pm 4` auto-expands to `\pm␣␣4`; triple space yields a semantic double space after a `\command` (§3.2). |
+| 20 | REPL whitespace | After a `\command`, typed spaces carry their full count (free terminator); no REPL/batch divergence (§3.1). |
 | 21 | `/` symmetry | Both numerator and denominator are single-space products (§3.2). |
+| 22 | Sign spacing | Prefix sign + SS binds the first factor of the numerator (`\pm b / 2 a` = `(±b)/(2a)`); prefix sign + DS applies to the whole next chunk only (`\pm  b / 2 a` = `±(b/(2a))`); values coincide, engine never normalizes between them (§3.2, §5.1). |
+| 23 | Bare `/` | A chunk opening with `/` has implicit numerator 1: `a␣␣/ b` = `a * (1/b)` (§5.1). |
 
 ## 19. Open questions
 

@@ -58,7 +58,9 @@ batch can do.
   relations.
 - **Whitespace is an operator**: a double space is chunk multiplication,
   and `/` takes single-space products on both sides, so the quadratic
-  formula needs no parentheses around `2 a`.
+  formula needs no parentheses around `2 a`. Sign spacing picks a sign's
+  scope: `\pm b / 2 a` is `(±b)/(2a)`; `\pm` + double space is
+  `±(b/(2a))`.
 - Definitions are rewrite rules: `x := e` clears and defines; `x = e`
   appends; either way, expressions containing `x` expand to its
   definition.
