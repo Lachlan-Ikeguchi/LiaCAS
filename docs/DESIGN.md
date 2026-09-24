@@ -29,18 +29,25 @@ Everything else in this document is in scope for v1.
 
 ## 2. Concepts: the store
 
-The engine holds one store with four compartments:
+The engine holds one store with three compartments:
 
 | Compartment | Written as | Meaning |
 |---|---|---|
-| **Definitions** | `x := e` (clear + define), `x = e` (append) | The symbol `x` is defined by a *conjunction* of expressions: every listed expression must hold for `x`. |
-| **Rewrite rules** | `pattern = replacement [where guards]` | One-directional substitution templates used to simplify expressions. |
-| **Assumptions** | `r > 10`, `n in INTEGER` | Context-only assertions. Consulted by guards (and later by the solver); never substituted into definitions. |
+| **Rules** | `x := e` / `x = e` / `pattern = replacement [where guards]` | One-directional rewrite templates in a single list keyed by LHS. A rule whose LHS is a literal symbol is a **definition** of that symbol; a rule whose LHS contains `$` metavariables is a **pattern rule**. |
+| **Assumptions** | `r > 10`, `n in INTEGER` | Context-only assertions. Consulted by guards (and later by the solver); never rewritten into. |
 | **Constraints** | unsolved equations, e.g. `b + 1 = 25` when the solver cannot isolate a symbol | Recorded facts awaiting a future solver. Listed by `definitions`, replayed in output, but not acted on in v1. |
 
-Uniformity rule: patterns use the same `:=` / `=` semantics as symbols — `:=`
-clears all existing rules with the same LHS, `=` appends a rule to that list.
-There is exactly one definition-store concept in the system.
+**Definitions are not separate from rules — a definition *is* a rule.** `:=`
+clears all existing rules with that LHS and inserts one; `=` appends.
+Because a definition is a rule, it fires during rewriting: any expression
+containing `x` expands `x` to its defined expression. Ground-value
+substitution (§7) is the same mechanism — substituting `b := 24` everywhere
+is rewriting with the rule `b → 24`.
+
+A symbol with several definitions (repeated `=`) holds a *conjunction*:
+every defining expression must hold for the symbol. During expansion the
+engine applies each definition and requires the results to agree after
+simplification; disagreement is a contradiction (§12).
 
 ---
 
@@ -74,7 +81,7 @@ Space is significant. Three distinct roles:
 | 1 (loosest) | `=`, `!=`, `<`, `<=`, `>`, `>=`, `in` | relations |
 | 2 | `+`, `-`, `\pm` | additive |
 | 3 | **double space** | chunk multiplication |
-| 4 | `/` | fraction; the denominator swallows the following **single-space** product |
+| 4 | `/` | fraction; **both sides** are single-space products — the denominator swallows the following product, the numerator the preceding one |
 | 5 | single space, juxtaposition, `*` | factor multiplication |
 | 6 | `^` | power (right-associative) |
 | 7 | atoms | numbers, variables, `( )`, function calls, `lim(...)` |
@@ -85,6 +92,14 @@ Derived rules:
   opts out: `a / b  c` means `(a/b) * c` — the double space ends the
   denominator. Double space is the escape hatch; single space is the default
   glue.
+- **Numerator swallow.** Symmetrically, the numerator is a single-space
+  product of the terms before the `/`: `a b / c` = `(a*b)/c`.
+- **REPL whitespace normalization.** In the interactive frontend (§14), any
+  run of spaces between two operands is treated as a **double space** (chunk
+  multiplication), because one-vs-two typed spaces cannot be distinguished
+  reliably in a terminal. Factor-level multiplication is written explicitly
+  with `*` in the REPL. Batch input is unaffected: there, single and double
+  spaces keep their distinct meanings.
 - **Inert double space before additive operators.** In `thing  + term2` the
   double space before the binary `+` is plain whitespace, *not* chunk
   multiplication. (Otherwise every aligned formula would multiply.) A double
@@ -94,15 +109,15 @@ Derived rules:
 - **`*` sits at level 5** with single space, so `a / b * c` = `a/(b*c)`.
   Consistent with "the denominator swallows the factor product", but different
   from most languages — documented on purpose.
-- **The denominator stops at:** end of chunk, a binary `+`/`-`/`\pm`, a
-  relation, `)`, or end of input. It does **not** stop at `^`: `a / b^2` =
-  `a/(b^2)`.
+- **Numerator and denominator stop at:** end of chunk (a double space), a
+  binary `+`/`-`/`\pm`, a relation, `)`, or end of input. Neither stops at
+  `^`: `a / b^2` = `a/(b^2)` and `a b^2 / c` = `(a*b^2)/c`.
 
 Worked example (double spaces shown as `␣␣` for legibility only — in real
 input they are two literal spaces):
 
 ```
-term␣␣numerator / (variable + constant) thing␣␠+ term2
+term␣␣numerator / (variable + constant) thing␣␣+ term2
 ```
 
 parses as:
@@ -130,19 +145,25 @@ Here `2 a` is a single-space product, so the denominator is `2a`.
   and `2 6 a` = `2 * 6 * a` (same tree).
 - `a2b` = `a * 2 * b`; `(a + 1)2` and `2(a + 1)` are also multiplications.
 - Decimal point stays inside the number: `2.5a` = `2.5 * a`.
-- **No scientific notation.** `1e5` is a parse error (`e` is a variable);
-  write `10^5`.
+- **No scientific notation.** `1e5` parses as `1 * e * 5` (letter runs are
+  variables, so `e` is the variable `e`); write `10^5`.
 - `2a^2` = `2 * (a^2)` since `^` binds the atom.
 
 ### 3.4 Identifiers and reserved words
 
-- Variables are **single ASCII letters** (`a`–`z`, `A`–`Z`) or Greek via
-  `\alpha` etc. This is what makes `2a6` splittable.
-- Multi-letter sequences are **reserved words only**: `sqrt sin cos tan asin
-  acos atan log ln exp abs lim where in include definitions clear`. Case is
-  significant.
-- An unknown multi-letter sequence is a **parse error**, never a silent
-  product of single letters.
+- Variables are ASCII **letter runs**, optionally with a subscript
+  enumeration introduced by `_`: `x`, `force`, `m`, `m_1`, `m_2`,
+  `matrix_10`. Greek letters are written `\alpha` etc. Case is significant.
+- **Digits only after `_`.** A maximal digit run is one number and
+  digit/letter adjacency is a multiplication boundary, so `2a6` = `2 * a * 6`
+  still holds and `a6` is not a valid variable name.
+- A maximal letter run lexes as **one identifier**: `ab` is the variable
+  `ab`; the product needs `a b` or `a*b`. This is the price of multi-letter
+  names — juxtaposition of *different* variables needs a space or `*`.
+- **Reserved words cannot be variables**: the function names (`sqrt sin cos
+  tan asin acos atan log ln exp abs lim`), the keywords (`where in include
+  definitions clear save`), and the set names (§8), exact match,
+  case-sensitive. Every other letter run is a valid variable name.
 
 ### 3.5 Functions and `lim`
 
@@ -160,36 +181,47 @@ lim($x -> 0, sin($x)/$x) = 1
 
 Statements are one per line (newlines terminate; blank lines ignored).
 
+The grammar is written EBNF-style; `"  "` below means **two literal space
+characters**. `{ }` means zero-or-more, `[ ]` optional, `|` alternatives.
+
 ```
 file        := statement { newline statement } ;
 
-statement   := definition | assumption | meta ;
+statement   := rule | assumption | meta ;
 
-definition  := expr ":=" expr [ where_clause ]      -- clear + define
+rule        := expr ":=" expr [ where_clause ]      -- clear rules with this LHS, insert
              | expr "="  expr [ where_clause ] ;    -- append (see §6–§9)
 
 assumption  := expr relop expr                      -- relop: != < <= > >= in
-             | expr "in" SETNAME ;
+             ;
 
 meta        := "include" glob
-             | "definitions"
-             | "clear" ;
+             | "definitions" [ symbol ]
+             | "clear"
+             | "save" path ;
 
 where_clause:= "where" guard { ";" guard } ;
 
 guard       := expr relop expr ;
 ```
 
-A `\`-command variable (`\alpha`) is an `expr` atom.
+`in` is a reserved word appearing as a relation at the relation level of the
+expression grammar; membership statements are therefore just `assumption`
+with `relop = in`. A `\`-command variable (`\alpha`) is an `expr` atom.
 
 **Statement classification** (how the engine reads `expr = expr`):
 
-1. LHS contains `$` metavariables → **rewrite rule** (§9).
-2. LHS is a single symbol (no `$`) → **definition append**; if the RHS is
-   ground (fully numeric / already-known), it is also a **fact** that
-   substitutes everywhere (§7).
+1. LHS contains `$` metavariables → **pattern rule** (§9).
+2. LHS is a symbol (no `$`) → **definition** (a rule keyed by that symbol,
+   §2, §6); if the RHS is ground (fully numeric / already-known), it is also
+   a **fact** that substitutes everywhere (§7).
 3. LHS is compound (no `$`) → **equation fact**; hand it to the solver (§7).
 4. Relation other than `=`, or set membership → **assumption** (§8).
+5. `where` on a rule whose LHS has no `$` metavariables is a parse error
+   (guards can only constrain metavariable bindings, §10).
+
+Note the special case at level 2: a rule whose LHS is a literal symbol is a
+definition, and definitions expand during rewriting (§2).
 
 ### Batch protocol
 
@@ -211,8 +243,13 @@ include /path/to/file/*.liaheader
 ```
 
 Glob expansion is supported. Paths are relative to the including file for
-file-based includes and to the current working directory in the REPL. Nested
-includes are allowed; **include cycles are an error**.
+file-based includes and to the current working directory in the REPL.
+Nested includes are allowed. **Idempotent by tracking:** each include
+records the files it has already loaded (by resolved absolute path) in the
+session; re-including a file (including via a cycle back to an
+already-loaded file) is a **no-op**, not an error. `clear` (§14) also clears
+the loaded-file tracking, so a cleared session can deliberately re-load the
+same files.
 
 ---
 
@@ -260,8 +297,9 @@ x = 24
 The store now holds `x := b + 1; x = 24`, and the engine attempts to
 reconcile them (§7).
 
-The same semantics apply to rewrite rules, keyed by LHS pattern: `p := r`
-clears all rules whose LHS equals `p`; `p = r` appends.
+Patterns use the same semantics, keyed by LHS expression: `p := r` clears
+all rules whose LHS equals `p`; `p = r` appends. Definitions and patterns
+are one concept — see §2.
 
 ---
 
@@ -272,13 +310,13 @@ The fact language is **equations**, compound LHS included:
 ```
 b = 24          -- ground fact: substitute 24 for b everywhere
 b + 1 = 25      -- equation: solve for b
-x = 24          -- both a definition append and a fact
+x = 24          -- both a definition insert (a rule) and a fact
 ```
 
 **v1 propagation pipeline** for each equation:
 
 1. Substitute known ground values into both sides.
-2. Simplify both sides via rewrite rules (§9).
+2. Simplify both sides via rules (§9).
 3. If one side is a single symbol, attempt **linear isolation** (v1's only
    solving): `b + 1 = 25` → `b := 24`.
 4. If solved: append the definition, substitute the new ground value
@@ -311,8 +349,9 @@ Standalone assumptions assert context without touching definitions:
 ```
 n in INTEGER
 r > 10
-r^x = 1 where x in COMPLEX; r > 10        -- as a rule's guards, see §10
 ```
+
+A rule's guards combine both kinds of condition (see §10).
 
 Built-in set registry (uppercase names, reserved):
 
@@ -327,7 +366,7 @@ BOOLEAN
   assumption and inside `where` guards.
 - Assumptions are never substituted into definitions; they are consulted by
   guard verification and, later, by the full solver.
-- `x = 24` in a prompt is a fact **and** a definition append; `x in INTEGER`
+- `x = 24` in a prompt is a fact **and** a definition insert; `x in INTEGER`
   is always only an assumption. Relational statements (`>`, `>=`, …) are
   always assumptions.
 
@@ -335,13 +374,14 @@ BOOLEAN
 
 ## 9. Rewrite rules (patterns)
 
-A rewrite rule is a definition whose LHS contains `$` metavariables:
+A rewrite rule is a rule whose LHS contains `$` metavariables:
 
 ```
 sin($x)^2 + cos($x)^2 = 1
 1 * $x = $x
 lim($x -> 0, sin($x)/$x) = 1
-r^x = 1 where x in COMPLEX; r > 10
+$x^2 = $x * $x
+$x/$x = 1 where $x != 0
 ```
 
 Semantics:
@@ -392,18 +432,24 @@ and to prompt expressions before they are stored.
 ## 10. Guards
 
 ```
-r^x = 1 where x in COMPLEX; r > 10
 $x/$x = 1 where $x != 0
+sqrt($x)^2 = $x where $x in REAL; $x >= 0
+($x + $y)^2 = $x^2 + 2 $x $y + $y^2
 ```
 
 - `where` introduces a `;`-separated conjunction of conditions; **all** must
   hold for the rule to fire.
-- Conditions are relations (`!=`, `<`, `<=`, `>`, `>=`, `=`, `in`).
+- Conditions are relations (`!=`, `<`, `<=`, `>`, `>=`, `=`, `in`)
+  comparing a bound metavariable or a literal symbol against an expression.
 - **Fail-closed verification:** a guard passes only if the engine can *prove*
   it from the store (bound numeric literals, assumed memberships, recorded
   ground values). Unverifiable ⇒ the rule does not fire. Guards never guess.
-- Guards can reference bound metavariables (`$x != 0`, `$n > 1`) and
-  absolute symbols (`r > 10`, resolved against the assumption store).
+  Example: `$x != 0` passes when the store knows `$x` bound a numeric
+  literal other than 0, or when the symbol is assumed nonzero; it fails
+  (rule skipped) otherwise.
+- Guards reference bound metavariables (`$x != 0`, `$n > 1`) and absolute
+  symbols (`r > 10`, resolved against the assumption store). A guard
+  referencing an unbound metavariable is a definition-time error.
 
 ---
 
@@ -413,14 +459,15 @@ Per statement, in order:
 
 1. **Parse.** Errors → stderr, statement rejected, continue (batch) or
    re-prompt (REPL).
-2. **Classify** (§4): rule / definition / equation / assumption / meta.
+2. **Classify** (§4): rule (definition or pattern) / equation /
+   assumption / meta.
 3. **Rules:** normalize LHS+RHS through the existing rules; insert
    (append for `=`, clear-then-insert for `:=`).
 4. **Assumptions:** insert into the assumption store.
 5. **Equations:** substitute → simplify → linear-isolate (§7). Solved:
-   append definition and propagate the new ground value through the whole
-   store. Unsolved: record as constraint.
-6. **Fixpoint rewrite** of every definition, rule, and constraint.
+   insert the resulting definition and propagate the new ground value
+   through the whole store. Unsolved: record as constraint.
+6. **Fixpoint rewrite** of every rule, assumption, and constraint.
 7. **Contradiction check** (§12).
 
 ---
@@ -431,14 +478,15 @@ Per statement, in order:
   statement is rejected and the store is left untouched.** Example:
   `x = 2` followed by `x = 3` → stderr message, `x = 3` not stored.
 - Parse errors: stderr with line/column, statement rejected.
-- Unknown multi-letter identifier, unbound `$` var on a RHS, include cycle,
-  missing include file, fixpoint step cap exceeded: all errors, stderr,
-  non-zero exit in batch mode.
+- Reserved word used as a variable, unbound `$` var on a RHS, unbound
+  metavariable in a guard, `where` on a `$`-free rule, missing include file,
+  fixpoint step cap exceeded: all errors, stderr, non-zero exit in batch
+  mode. (Include cycles are not errors — includes are idempotent, §4.)
 - v1 detects contradictions between ground values; full consistency
   checking across the store is future work (§17).
 
 Exit codes (batch): `0` success, `1` parse error, `2` contradiction,
-`3` runtime error (missing include, step cap, cycle).
+`3` runtime error (missing include, step cap).
 
 ---
 
@@ -471,18 +519,28 @@ liacas < header_prompt_input
 
 ### REPL (`-i`)
 
-Same engine, line at a time, with QOL commands:
+Same engine, line at a time. **Model:** the REPL keeps an internal header
+(the accumulated store), exposes only the prompt to the user, and on each
+line runs batch-equivalent processing: `internal header + new statement`.
+This is why the REPL has no semantics of its own — it *is* the batch
+frontend run once per line, with the previous run's output prepended as
+context.
+
+QOL commands:
 
 | Command | Effect |
 |---|---|
 | `include <glob>` | Load statements from `.liaheader` files (§4). |
 | `definitions` | List the current store: definitions, rules, assumptions, constraints. |
-| `clear` | Remove everything — definitions, rules, assumptions, constraints. Blank slate. |
+| `definitions <symbol>` | List only the definitions (rules) keyed by `<symbol>`. |
+| `clear` | Remove everything — definitions, rules, assumptions, constraints, and the include tracking (§4). Blank slate. |
+| `save <path>` | Write the internal header (the current store, in round-trippable form, §13) to `<path>`. If the file already exists and is non-empty, **append**; otherwise create/overwrite. The saved file is directly usable as an `include` target or a batch header. |
 
-The REPL adds **no evaluation semantics**. Everything it can do, batch can
-do; the REPL only wraps the loop with convenience. (Further QOL — history,
-multi-line editing, session save via stdout capture — is frontend work that
-never touches the engine.)
+The REPL adds **no evaluation semantics**: every statement it accepts is
+processed exactly as batch would process it. Its QOL commands manipulate
+the internal header (list, clear, save, extend via `include`) — header
+management, not evaluation. (Further QOL — history, multi-line editing —
+is frontend work that never touches the engine.)
 
 ---
 
@@ -492,7 +550,8 @@ never touches the engine.)
 liacas-core (library)
 ├── lexer        whitespace-aware (0/1 vs 2+ spaces), \commands, numbers
 ├── parser       precedence hierarchy (§5) -> AST
-├── store        definitions (:=/=), rules, assumptions, constraints, sets
+├── store        unified rules (:=/=, symbols and patterns), assumptions,
+│                constraints, sets, include tracking
 ├── engine       substitute -> solve/implicate -> rewrite to fixpoint (§11)
 ├── solver       staged: v1 substitution + linear isolation;
 │                full solving plugs into the same interface later
@@ -500,7 +559,8 @@ liacas-core (library)
 
 frontends
 ├── batch (default): stdin header+prompt -> stdout store, errors -> stderr
-└── repl (-i):        same engine + include / definitions / clear
+└── repl (-i):        same engine; internal header + include /
+                     definitions / clear / save
 ```
 
 ---
@@ -527,21 +587,29 @@ Output:  b := 23
          x = 24
 ```
 
-**Trace 3 — guarded rule:**
+**Trace 3 — guarded rule, fail-closed:**
 
 ```
-Header:  x/$x = 1 where $x != 0          (rejected: see note)
-```
-
-Correct form — `$` vars must bind, so the rule is:
-
-```
-         $x/$x = 1 where $x != 0
+Header:  $x/$x = 1 where $x != 0
 Prompt:  a/a
-Output:  1                                       (guard `a != 0` unverifiable?
-                                                 then the rule does NOT fire;
-                                                 with `a in NONZERO` assumed
-                                                 it fires and yields 1)
+Output:  a/a          (guard `a != 0` unverifiable -> rule does NOT fire)
+```
+
+But with a positive assumption about `a`:
+
+```
+Header:  $x/$x = 1 where $x != 0
+         a != 0
+Prompt:  a/a
+Output:  1             (guard `a != 0` proven from the assumption -> fires)
+```
+
+And the guard passes automatically for numeric literals other than 0:
+
+```
+Header:  $x/$x = 1 where $x != 0
+Prompt:  5/5
+Output:  1             (5 is a literal != 0 -> provable -> fires)
 ```
 
 **Trace 4 — chained rewriting:** see §9.
@@ -553,13 +621,15 @@ Output:  1                                       (guard `a != 0` unverifiable?
 **v1 (this document's scope):**
 
 1. Whitespace-aware lexer; expression parser with §5 precedence.
-2. Store with `:=`/`=` clear/append semantics (symbols and patterns).
+2. Unified rule store (definitions and pattern rules, §2) with `:=`/`=`
+   clear/append semantics.
 3. Substitution + linear-isolation solver slot.
 4. Pattern matcher (AC for `+`/`*`, consistent `$` binding) + guards +
    fixpoint rewriter with step cap + rule normalization.
-5. Batch frontend: header/prompt protocol, `include` with globs and cycle
-   detection, round-trippable renderer.
-6. REPL wrapper: `include`, `definitions`, `clear`.
+5. Batch frontend: header/prompt protocol, `include` with globs and
+   idempotent loading, round-trippable renderer.
+6. REPL wrapper: internal-header model, `include`, `definitions`,
+   `definitions <symbol>`, `clear`, `save`.
 
 **Planned, later (same interfaces, bigger engines):**
 
@@ -587,29 +657,28 @@ Output:  1                                       (guard `a != 0` unverifiable?
 | 7 | Pattern `:=`/`=` | Same clear/append semantics as symbols; `=` with same LHS appends (branching); `:=` replaces (§6, §9). |
 | 8 | Rule interaction | Fixpoint application, deterministic, one result, step cap; rules normalize through existing rules at definition time (§9). |
 | 9 | Function parameters | Explicit `$` only; no implicit pattern variables (§3.5, §9). |
-| 10 | Multi-letter identifiers | Reserved words only; unknown → parse error (§3.4). |
+| 10 | Identifiers | Multi-letter variables allowed (letter runs, `_` subscript enumeration like `m_1`); reserved words and digits-after-letter excluded (`2a6` = `2*a*6` still holds) (§3.4). |
 | 11 | Whitespace hierarchy | Double space = chunk multiplication; `/` swallows single-space products; `*` at single-space level; `/` left-assoc; `^` right-assoc; double space inert before `+`/`-` (§3.2). |
 | 12 | Numbers | Maximal digit runs; juxtaposition = multiplication (`2a6` = `2*a*6`); no scientific notation (§3.3). |
 | 13 | ASCII policy | `\commands` only for non-typable symbols; `->`, `>=`, `<=`, `!=` ASCII (§3.1). |
 | 14 | Sets | `NATURAL` (contains 0), `INTEGER`, `RATIONAL`, `REAL`, `COMPLEX`, `PRIME`, `BOOLEAN` (§8). |
-| 15 | Statement kinds | Definitions, rewrite rules, assumptions, constraints (§2). |
+| 15 | Statement kinds | Rules (definitions + pattern rules unified), assumptions, constraints (§2). |
 | 16 | Architecture | Core library + batch (primary) + REPL wrapper with no extra semantics (§1, §15). |
 | 17 | Output | Full store, round-trippable, stdout; errors stderr + exit codes (§12, §13). |
-| 18 | REPL QOL | `include`, `definitions`, `clear` (§14). |
+| 18 | REPL QOL | `include`, `definitions`, `definitions <symbol>`, `clear`, `save <path>`; internal-header model (§14). |
+| 19 | Includes | Idempotent via loaded-file tracking; re-include/cycle is a no-op; `clear` resets tracking (§4). |
+| 20 | REPL whitespace | Runs of spaces in interactive input normalize to double space (chunk multiplication); `*` for factor multiplication (§3.2). |
+| 21 | `/` symmetry | Both numerator and denominator are single-space products (§3.2). |
 
 ## 19. Open questions
 
-1. **`clear` scope** — currently specified as full store reset (definitions,
-   rules, assumptions, constraints). Alternative: definitions only, leaving
-   assumptions intact. Default stands until someone needs the alternative.
-2. **`NONZERO`-style guard sets** — trace 3 shows guards like `$x != 0`
-   failing closed without a positive assumption. Should v1 ship a
-   `NONZERO` set (or `\where $x in REAL \ {0}`) to make such rules usable?
-3. **REPL persistence** — should the REPL grow an explicit `save` command,
-   or is "redirect output to a `.liaheader`" sufficient given the
-   round-trip contract?
-4. **Renderer spacing fidelity** — exact rules for when the renderer emits
+1. **Renderer spacing fidelity** — exact rules for when the renderer emits
    double spaces vs parentheses to guarantee round-tripping need to be
    pinned during implementation (§13).
-5. **AC-matching completeness** — which practical AC cases beyond flat
+2. **AC-matching completeness** — which practical AC cases beyond flat
    sums/products (nested, mixed literals) v1 must handle (§9).
+3. **Expansion strategy for multi-definition symbols** — when a symbol has
+   several definitions (`x = e1` then `x = e2`), v1 requires the expanded
+   results to agree after simplification. Whether disagreement should also
+   *drive solving* (feed the disagreement equation to the solver, §7) instead
+   of only erroring is an open refinement.

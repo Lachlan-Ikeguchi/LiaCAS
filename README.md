@@ -43,7 +43,9 @@ commands:
 |---|---|
 | `include <glob>` | Load definitions from `.liaheader` files |
 | `definitions` | List all current definitions, rules, assumptions, constraints |
+| `definitions <symbol>` | List only the definitions of `<symbol>` |
 | `clear` | Remove all definitions, rules, assumptions, constraints |
+| `save <path>` | Write the accumulated session header to a `.liaheader` file (appends if the file has content) |
 
 The REPL adds no evaluation semantics of its own — everything it can do,
 batch can do.
@@ -54,12 +56,16 @@ batch can do.
   (`\pm`, `\infty`, `\alpha`); `->`, `>=`, `<=`, `!=` for arrows and
   relations.
 - **Whitespace is an operator**: a double space is chunk multiplication,
-  and `/` swallows the following single-space product, so the quadratic
+  and `/` takes single-space products on both sides, so the quadratic
   formula needs no parentheses around `2 a`.
-- `x := e` clears and defines; `x = e` appends to the definitions of `x`.
-- `$x` in a definition makes it a rewrite rule — `$x` binds any
-  subexpression, with optional `where` guards:
-  `r^x = 1 where x in COMPLEX; r > 10`.
+- Definitions are rewrite rules: `x := e` clears and defines; `x = e`
+  appends; either way, expressions containing `x` expand to its
+  definition.
+- Multi-character variables are supported (`force`, `m_1`, `m_2`);
+  reserved words (`sqrt`, `sin`, `where`, set names, …) cannot be
+  variables.
+- `$x` in a rule makes it a pattern — `$x` binds any subexpression, with
+  optional `where` guards: `$x/$x = 1 where $x != 0`.
 - Built-in sets: `NATURAL` (includes 0), `INTEGER`, `RATIONAL`, `REAL`,
   `COMPLEX`, `PRIME`, `BOOLEAN`.
 
