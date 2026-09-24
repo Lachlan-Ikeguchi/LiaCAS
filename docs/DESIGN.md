@@ -94,16 +94,32 @@ Derived rules:
   glue.
 - **Numerator swallow.** Symmetrically, the numerator is a single-space
   product of the terms before the `/`: `a b / c` = `(a*b)/c`.
-- **REPL whitespace normalization.** In the interactive frontend (§14), any
-  run of spaces between two operands is treated as a **double space** (chunk
-  multiplication), because one-vs-two typed spaces cannot be distinguished
-  reliably in a terminal. Factor-level multiplication is written explicitly
-  with `*` in the REPL. Batch input is unaffected: there, single and double
-  spaces keep their distinct meanings.
+- **REPL whitespace after `\commands`.** In the interactive frontend
+  (§14), the space situation after a `\command` is confusing because the
+  TeX terminator (§3.1) eats the first space. The REPL preprocesses
+  interactive input so typed spaces after a `\command` carry the batch
+  meaning of **one fewer** space — with one special case:
+  - `\pm 4` (one typed space) **auto-expands** to `\pm␣␣4` (double
+    space), which resolves to plus-or-minus 4 — in sign position, the
+    signed chunk `±4` (see below); in binary position, `x \pm 4`.
+  - A typed double space after a `\command` acts as a **single** space
+    — not the double space a user might expect.
+  - To get a semantic **double space** after a `\command` (e.g. the
+    `± numerator / denominator` case below), type a **triple** space.
+  Spaces not following a `\command` keep their batch meaning in the
+  REPL. Batch input is unaffected by all of this.
 - **Inert double space before additive operators.** In `thing  + term2` the
   double space before the binary `+` is plain whitespace, *not* chunk
   multiplication. (Otherwise every aligned formula would multiply.) A double
-  space only multiplies between two operands.
+  space only multiplies between two operands. The same holds **after** a
+  binary additive operator: `a \pm␣␣b` is just `a \pm b`.
+- **Signed chunks.** In **sign position** — at the start of an expression,
+  summand, or chunk — a double space after a sign operator (`-`, `+`, `\pm`)
+  forms a **signed chunk**: `\pm␣␣X` is the quantity `±X` as one unit,
+  usable as a numerator, denominator, or multiplicand without parentheses:
+  `\pm␣␣b / 2 a` = `(\pm b)/(2 a)`, whereas `\pm b / 2 a` =
+  `\pm (b/(2 a))`. (The values coincide — this is parenthesization
+  control over the printed tree.) `-␣␣b / 2 a` = `(-b)/(2 a)` likewise.
 - **`/` is left-associative:** `a / b / c` = `(a/b)/c`. Continued fractions
   need parentheses.
 - **`*` sits at level 5** with single space, so `a / b * c` = `a/(b*c)`.
@@ -197,7 +213,7 @@ assumption  := expr relop expr                      -- relop: != < <= > >= in
 
 meta        := "include" glob
              | "definitions" [ symbol ]
-             | "clear"
+             | "clear" [ symbol ]
              | "save" path ;
 
 where_clause:= "where" guard { ";" guard } ;
@@ -534,6 +550,7 @@ QOL commands:
 | `definitions` | List the current store: definitions, rules, assumptions, constraints. |
 | `definitions <symbol>` | List only the definitions (rules) keyed by `<symbol>`. |
 | `clear` | Remove everything — definitions, rules, assumptions, constraints, and the include tracking (§4). Blank slate. |
+| `clear <symbol>` | Remove only the rules keyed by `<symbol>`, leaving assumptions and other definitions intact. |
 | `save <path>` | Write the internal header (the current store, in round-trippable form, §13) to `<path>`. If the file already exists and is non-empty, **append**; otherwise create/overwrite. The saved file is directly usable as an `include` target or a batch header. |
 
 The REPL adds **no evaluation semantics**: every statement it accepts is
@@ -628,8 +645,9 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
    fixpoint rewriter with step cap + rule normalization.
 5. Batch frontend: header/prompt protocol, `include` with globs and
    idempotent loading, round-trippable renderer.
-6. REPL wrapper: internal-header model, `include`, `definitions`,
-   `definitions <symbol>`, `clear`, `save`.
+6. REPL wrapper: internal-header model, `include`, `definitions`/
+   `definitions <symbol>`, `clear`/`clear <symbol>`, `save`, and the
+   post-`\command` whitespace shift (§3.2).
 
 **Planned, later (same interfaces, bigger engines):**
 
@@ -665,9 +683,9 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
 | 15 | Statement kinds | Rules (definitions + pattern rules unified), assumptions, constraints (§2). |
 | 16 | Architecture | Core library + batch (primary) + REPL wrapper with no extra semantics (§1, §15). |
 | 17 | Output | Full store, round-trippable, stdout; errors stderr + exit codes (§12, §13). |
-| 18 | REPL QOL | `include`, `definitions`, `definitions <symbol>`, `clear`, `save <path>`; internal-header model (§14). |
+| 18 | REPL QOL | `include`, `definitions`/`definitions <symbol>`, `clear`/`clear <symbol>`, `save <path>`; internal-header model (§14). |
 | 19 | Includes | Idempotent via loaded-file tracking; re-include/cycle is a no-op; `clear` resets tracking (§4). |
-| 20 | REPL whitespace | Runs of spaces in interactive input normalize to double space (chunk multiplication); `*` for factor multiplication (§3.2). |
+| 20 | REPL whitespace | After a `\command`, typed spaces carry the meaning of one fewer space; `\pm 4` auto-expands to `\pm␣␣4`; triple space yields a semantic double space after a `\command` (§3.2). |
 | 21 | `/` symmetry | Both numerator and denominator are single-space products (§3.2). |
 
 ## 19. Open questions

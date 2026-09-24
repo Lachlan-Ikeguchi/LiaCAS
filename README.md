@@ -45,6 +45,7 @@ commands:
 | `definitions` | List all current definitions, rules, assumptions, constraints |
 | `definitions <symbol>` | List only the definitions of `<symbol>` |
 | `clear` | Remove all definitions, rules, assumptions, constraints |
+| `clear <symbol>` | Remove only the definitions of `<symbol>` |
 | `save <path>` | Write the accumulated session header to a `.liaheader` file (appends if the file has content) |
 
 The REPL adds no evaluation semantics of its own — everything it can do,
