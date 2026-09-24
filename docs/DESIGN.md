@@ -2,7 +2,7 @@
 
 Status: living document. This is the blueprint that implementation work is
 built against. It specifies the **complete system design** — every feature
-the finished CAS has, including the full solver; capabilities are staged by
+the finished CAS has, including the full solver; the build order for those capabilities is the milestones of
 the build order in [`ROADMAP.md`](../ROADMAP.md), not by version numbers.
 The **reasoning behind each decision** — context, alternatives considered,
 and why — is recorded in [`DECISIONS.md`](DECISIONS.md) (ADR log).
@@ -35,7 +35,7 @@ The engine holds one store with three compartments:
 |---|---|---|
 | **Rules** | `x := e` / `x = e` / `pattern = replacement [where guards]` | One-directional rewrite templates in a single list keyed by LHS. A rule whose LHS is a literal symbol is a **definition** of that symbol; a rule whose LHS contains `$` metavariables is a **pattern rule**. |
 | **Assumptions** | `r > 10`, `n in INTEGER` | Context-only assertions. Consulted by guards (and later by the solver); never rewritten into. |
-| **Constraints** | unsolved equations, e.g. `b + 1 = 25` beyond the current solver's reach | Recorded facts awaiting a stronger solver stage. Listed by `definitions`, replayed in output, and re-attempted as solver capability grows. |
+| **Constraints** | unsolved equations, e.g. `b + c = 25` while `c` is unknown | Equations the solver cannot resolve with the current store. Listed by `definitions`, replayed in output, and re-attempted whenever the store changes (§7.1). |
 
 **Definitions are not separate from rules — a definition *is* a rule.** `:=`
 clears all existing rules with that LHS and inserts one; `=` appends.
@@ -292,8 +292,8 @@ Notes:
 - `relation` appears only where a relation is legal (statement level, inside
   guards, inside `where` clauses).
 - `\pm` at the additive level keeps both branches: `x \pm 1` is a single
-  expression that the renderer prints back as `\pm`; branching on it is a
-  solver-stage concern (§7.1).
+  expression that the renderer prints back as `\pm`; resolving it into
+  branches is the solver's job (§7.1).
 - Unary minus: `-x` is a negation atom at the summand position; `a - b` is
   binary subtraction.
 - A summand may open with a sign applied to its **whole first chunk** via
@@ -376,27 +376,38 @@ x = 24          -- both a definition insert (a rule) and a fact
 
 ### 7.1 The solver
 
-The solver is a single interface with **staged capability**:
-
 ```
 solve(equation, store) -> bindings | unsolved
 ```
 
-Each stage is a complete, self-contained solver; each strictly extends the
-previous one. The design fixes the interface and the stage order — the
-milestones in [`ROADMAP.md`](../ROADMAP.md) build the stages in sequence:
+The solver's complete capacity:
 
-| Stage | Solves | Examples |
-|---|---|---|
-| S1 — substitution & linear isolation | `symbol = expr` with the symbol linearly isolable; ground facts | `b = 24`, `b + 1 = 25` |
-| S2 — polynomial solving | polynomial equations in one symbol, by degree | `x^2 + 3 x + 2 = 0`; `±`-branch selection against definitions (e.g. `x = 3` vs. the quadratic formula) |
-| S3 — systems & beyond | simultaneous equations, nonlinear cases | `x + y = 3; x - y = 1` |
+- **Ground facts** — `b = 24`: substituted directly.
+- **Single-symbol linear isolation** — `b + 1 = 25`, `2x - 3 = 10`.
+- **Polynomial equations in one symbol, by degree** — quadratics
+  (`x^2 + 3 x + 2 = 0`) and higher degrees via factoring over the store's
+  rules and assumptions.
+- **Systems** — simultaneous linear systems (`x + y = 3; x - y = 1`), then
+  nonlinear systems via substitution between equations.
 
-A returned binding set is a conjunction: each binding becomes a definition
-insert (§6) and propagates through the store. **`±` solutions** — when the
-solver returns branches, e.g. `(3, -1)` for a quadratic — are handled by
-inserting each branch as a candidate definition set and requiring
-consistency (§12); branch handling interacts with constraints per §19.
+**Bindings.** A solved equation returns a *conjunction* of bindings; each
+binding becomes a definition insert (§6) and propagates through every
+rule, assumption, and constraint in the store, then everything rewrites to
+fixpoint.
+
+**`±` branches.** When a solution has branches (a quadratic yielding
+`x = 2 \pm 1`, i.e. candidate sets `(3, -1)`), the solver returns all
+branches; each branch is checked for consistency against the store, and
+contradicting branches are rejected (§12). Selecting `x = 3` against the
+quadratic-formula definition therefore picks the viable branch rather than
+erroring.
+
+**Unsolved equations.** An equation that cannot be resolved **with the
+current store** — e.g. `b + c = 25` while `c` is unknown — is recorded as a
+**constraint** (§2): listed by `definitions`, replayed in output, and
+**re-attempted whenever the store changes**. "Unsolved" is a function of
+the store contents at that moment, not a permanent classification — once
+`c = 1` arrives, the pending constraint resolves to `b := 24`.
 
 Example trace:
 
@@ -409,8 +420,9 @@ Output:   b := 23
           x = 24
 ```
 
-The solver stages arrive in milestones; S1 is the first delivered, S2 and
-S3 slot into the same `solve()` interface without redesign.
+The order in which the solver's capacity is *constructed* is a build
+concern, sequenced in [`ROADMAP.md`](../ROADMAP.md); this section specifies
+the finished behavior with no internal staging.
 
 ---
 
@@ -536,10 +548,9 @@ Per statement, in order:
 3. **Rules:** normalize LHS+RHS through the existing rules; insert
    (append for `=`, clear-then-insert for `:=`).
 4. **Assumptions:** insert into the assumption store.
-5. **Equations:** substitute → simplify → `solve()` at the current
-   capability stage (§7.1). Solved: insert the resulting definitions and
-   propagate each new ground value through the whole store. Unsolved:
-   record as constraint.
+5. **Equations:** substitute → simplify → `solve()` (§7.1). Solved:
+   insert the resulting definitions and propagate each new ground value
+   through the whole store. Unsolved: record as constraint.
 6. **Fixpoint rewrite** of every rule, assumption, and constraint.
 7. **Contradiction check** (§12).
 
@@ -556,8 +567,9 @@ Per statement, in order:
   fixpoint step cap exceeded: all errors, stderr, non-zero exit in batch
   mode. (Include cycles are not errors — includes are idempotent, §4.)
 - Contradiction detection between ground values is immediate; full
-  consistency checking across the store grows with the solver stages
-  (§7.1) — see the milestones in [`ROADMAP.md`](../ROADMAP.md).
+  consistency checking across the store (all compartments, all branches)
+  is specified in §7.1 and §12 — see the milestones in
+  [`ROADMAP.md`](../ROADMAP.md) for its construction order.
 
 Exit codes (batch): `0` success, `1` parse error, `2` contradiction,
 `3` runtime error (missing include, step cap).
@@ -628,8 +640,8 @@ liacas-core (library)
 ├── store        unified rules (:=/=, symbols and patterns), assumptions,
 │                constraints, sets, include tracking
 ├── engine       substitute -> solve/implicate -> rewrite to fixpoint (§11)
-├── solver       staged capability: S1 substitution + linear isolation,
-│                S2 polynomial, S3 systems — one solve() interface
+├── solver       substitution, linear isolation, polynomials,
+│                `±` branches, systems — one solve() interface
 └── render       AST -> round-trippable ASCII (§13)
 
 frontends
@@ -696,9 +708,9 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
 The design above is the complete system. It is built incrementally: each
 milestone in [`ROADMAP.md`](../ROADMAP.md) delivers a working, testable
 LiaCAS at a strictly larger capability, in dependency order, ending with
-the complete design. Capabilities staged in this document — the solver
-stages (§7.1), complete AC matching, proof search, assumption propagation —
-are milestone entries there, not version numbers here.
+the complete design. Capabilities specified in this document — the solver's
+full capacity (§7.1), complete AC matching, proof search, assumption
+propagation — are milestone entries there, not version numbers here.
 
 ---
 
@@ -709,7 +721,7 @@ A summary table; the full reasoning for each decision lives in
 
 | # | Decision | Resolution |
 |---|---|---|
-| 1 | Implication depth | Equations with compound LHS; the solver is one `solve()` interface with staged capability S1–S3 (§7.1, ROADMAP.md). |
+| 1 | Implication depth | Equations with compound LHS; the solver is one `solve()` interface with the full capacity of §7.1 (substitution, isolation, polynomials, `±` branches, systems). |
 | 2 | Contradictions | Detect, report to stderr, reject the statement (store untouched) (§12). |
 | 3 | Fact language | Equations, compound LHS legal (§7). |
 | 4 | Pattern variable scope | `$` binds any subexpression, consistently within a pattern (§9). |

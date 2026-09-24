@@ -114,25 +114,32 @@ downstream.
 **Consequences.** Batch exit code 2 for contradictions; full store-wide
 consistency checking is deferred with the solver (§17). Spec: §12.
 
-## ADR-006: Facts are equations; solver staged as S1–S3
+## ADR-006: Facts are equations; one full-capacity solver
 
 **Context.** Prompts carry "new information with implications for known
 definitions" — e.g. header `x := b + 1`, prompt `x = 24` should derive
-`b := 23`. How deep should implication go?
+`b := 23`. How deep should implication go, and how should the design talk
+about solver capability that arrives over time?
 
 **Decision.** The fact language is equations (compound LHS legal:
-`b + 1 = 25`). The solver is a single `solve(equation, store)` interface
-with **staged capability** (DESIGN §7.1): S1 substitution + linear
-isolation, S2 polynomial solving with `±`-branch selection, S3 systems.
-Unsolved equations are recorded as *constraints* and re-attempted as
-solver capability grows. The stages are built as milestones M5/M9/M10 of
-[`ROADMAP.md`](../ROADMAP.md); each strictly extends the previous.
+`b + 1 = 25`). The design specifies the solver's **complete capacity**
+with no internal staging (DESIGN §7.1): ground substitution, single-symbol
+linear isolation, polynomial equations by degree, `±`-branch resolution
+with store-consistency checking, and systems (linear, then nonlinear via
+substitution) — one `solve(equation, store)` interface. Unsolved equations
+are recorded as *constraints* — a function of the current store, not a
+capability label — and are re-attempted whenever the store changes.
+Construction order is purely a roadmap concern (linear isolation first,
+polynomials, then systems: ROADMAP.md M5/M9/M10); the design fixes the
+interface so the sequence needs no redesign.
 
 **Alternatives.**
 - Substitution-only: rejected — `b + 1 = 25` is too basic to fail on.
-- Full solver first: rejected — a full solver (quadratics, systems,
-  `±`-branch selection) is a project on its own; the staged interface lets
-  it slot in later without redesign.
+- Staging the design by capability (S1/S2/S3 in the spec): rejected —
+  it recreates version numbering inside the design document; build order
+  belongs in the roadmap alone.
+- Full solver before anything else ships: rejected — nothing would be
+  usable until everything was done; milestones deliver working systems.
 
 **Consequences.** Multi-definition symbols must agree after expansion
 (§2); disagreement-driven solving is an open refinement (§19). Spec: §7.
@@ -376,8 +383,8 @@ multiplies: `(a + 1)2`.
 renderer) is the system; the batch frontend (stdin header+prompt →
 stdout store, errors to stderr with exit codes) is the primary interface,
 "a library that behaves like a CLI"; the REPL is a wrapper adding QOL
-only. The solver is one `solve()` interface with staged capability
-(ADR-006), built across milestones M5–M10.
+only. The solver is one `solve()` interface with the full capacity of
+DESIGN §7.1, constructed across milestones (ROADMAP.md).
 
 **Consequences.** Every feature is testable through batch alone; the
 REPL is thin enough to rewrite without touching semantics. Spec: §15.

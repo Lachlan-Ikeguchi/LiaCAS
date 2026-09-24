@@ -73,12 +73,13 @@ definition time (§9, §10).
 - Guards referencing unbound metavariables are definition-time errors;
   the step cap reports rather than loops (`$x = $x + 1`).
 
-## M5 — Solver stage S1: substitution and linear isolation
+## M5 — Solver: substitution and linear isolation
 
 **Build.** The `solve(equation, store) -> bindings | unsolved` interface
-with S1: ground substitution and single-symbol linear isolation (§7.1).
-Solved bindings insert as definitions and propagate; unsolved equations
-record as constraints and are re-attempted on store changes.
+with its first capacity: ground substitution and single-symbol linear
+isolation (§7.1). Solved bindings insert as definitions and propagate;
+unsolved equations record as constraints and are re-attempted on store
+changes.
 
 **Acceptance.**
 - §16 trace 2: header `x := b + 1`, prompt `x = 24` → `b := 23`, `x = 24`.
@@ -120,7 +121,7 @@ with batch (§3.1).
 
 **Build.** Pin the open renderer questions (§19): exact DS-vs-parens
 emission rules; expansion agreement for multi-definition symbols;
-store-wide consistency checking grown from the S1 contradiction checks.
+store-wide consistency checking grown from the M5 contradiction checks.
 
 **Acceptance.**
 - The round-trip fuzz corpus extends over every store compartment
@@ -128,30 +129,30 @@ store-wide consistency checking grown from the S1 contradiction checks.
 - Multi-definition disagreement reports the conflicting pair (§19.3
   resolution decided at this milestone).
 
-## M9 — Solver stage S2: polynomial solving
+## M9 — Solver: polynomial solving
 
-**Build.** Degree-ordered polynomial equations in one symbol on the same
-`solve()` interface: linear (already S1), quadratics with `±`-branch
-solutions, higher degrees by factoring over the store's rules and
-assumptions. `±`-branch selection against definitions (§7.1: `x = 3` vs.
-the quadratic formula).
+**Build.** Degree-ordered polynomial equations in one symbol, extending the
+same `solve()` interface: quadratics with `±`-branch solutions, higher
+degrees by factoring over the store's rules and assumptions.
+`±`-branch selection against definitions (§7.1: `x = 3` vs. the quadratic
+formula).
 
 **Acceptance.**
 - `x^2 + 3 x + 2 = 0` yields both bindings; each branch is checked against
   the store and contradictions reject per §12.
 - The quadratic formula definition + `x = 3` selects a branch.
-- S1 acceptance checks still pass (strict capability extension).
+- All prior acceptance checks still pass (strict capability extension).
 
-## M10 — Solver stage S3: systems and beyond
+## M10 — Solver: systems
 
 **Build.** Simultaneous linear systems, then nonlinear systems via
-substitution + the S2 stage. Constraint re-attempting becomes solver-driven
-(§7.1).
+substitution between equations. Constraint re-attempting becomes
+solver-driven across whole systems (§7.1).
 
 **Acceptance.**
 - `x + y = 3; x - y = 1` solves as a binding conjunction.
-- Previously recorded constraints resolve when capability arrives
-  (an M5-recorded `b + c = 25` with `c = 1` known later solves).
+- Previously recorded constraints resolve when the store makes them
+  solvable (an M5-recorded `b + c = 25` with `c = 1` known later solves).
 - All prior acceptance checks still pass.
 
 ## Beyond M10 (design extensions, specified as they are adopted)
