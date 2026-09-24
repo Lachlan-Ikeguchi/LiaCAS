@@ -1,14 +1,16 @@
 # LiaCAS — Design Document
 
-Status: living document (v0 draft). This is the blueprint that implementation
-work is built against. The **reasoning behind each decision** — context,
-alternatives considered, and why — is recorded in
-[`DECISIONS.md`](DECISIONS.md) (ADR log). Anything genuinely unsettled lives
-in §19.
+Status: living document. This is the blueprint that implementation work is
+built against. It specifies the **complete system design** — every feature
+the finished CAS has, including the full solver; capabilities are staged by
+the build order in [`ROADMAP.md`](../ROADMAP.md), not by version numbers.
+The **reasoning behind each decision** — context, alternatives considered,
+and why — is recorded in [`DECISIONS.md`](DECISIONS.md) (ADR log).
+Anything genuinely unsettled lives in §19.
 
 ---
 
-## 1. Goals and non-goals
+## 1. Goals
 
 **Goal.** LiaCAS is a Computer Algebra System that behaves like a library with
 two thin frontends:
@@ -19,13 +21,9 @@ two thin frontends:
 - **REPL (wrapper):** the same engine packaged with quality-of-life features.
   The REPL adds no evaluation semantics of its own.
 
-**Non-goals for v1** (planned features, deliberately deferred — see §17):
-
-- General equation solving (quadratics, systems, `±`-branch selection).
-- Branch/proof search over multiple candidate rewrite results.
-- Assumption *propagation* (deriving new assumptions from old).
-
-Everything else in this document is in scope for v1.
+The design below is the complete system. Capabilities arrive incrementally
+via the milestones in [`ROADMAP.md`](../ROADMAP.md); each milestone delivers
+a working, testable system at its own scope.
 
 ---
 
@@ -37,7 +35,7 @@ The engine holds one store with three compartments:
 |---|---|---|
 | **Rules** | `x := e` / `x = e` / `pattern = replacement [where guards]` | One-directional rewrite templates in a single list keyed by LHS. A rule whose LHS is a literal symbol is a **definition** of that symbol; a rule whose LHS contains `$` metavariables is a **pattern rule**. |
 | **Assumptions** | `r > 10`, `n in INTEGER` | Context-only assertions. Consulted by guards (and later by the solver); never rewritten into. |
-| **Constraints** | unsolved equations, e.g. `b + 1 = 25` when the solver cannot isolate a symbol | Recorded facts awaiting a future solver. Listed by `definitions`, replayed in output, but not acted on in v1. |
+| **Constraints** | unsolved equations, e.g. `b + 1 = 25` beyond the current solver's reach | Recorded facts awaiting a stronger solver stage. Listed by `definitions`, replayed in output, and re-attempted as solver capability grows. |
 
 **Definitions are not separate from rules — a definition *is* a rule.** `:=`
 clears all existing rules with that LHS and inserts one; `=` appends.
@@ -294,8 +292,8 @@ Notes:
 - `relation` appears only where a relation is legal (statement level, inside
   guards, inside `where` clauses).
 - `\pm` at the additive level keeps both branches: `x \pm 1` is a single
-  expression that the renderer prints back as `\pm` (v1 does not branch on
-  it; see §17).
+  expression that the renderer prints back as `\pm`; branching on it is a
+  solver-stage concern (§7.1).
 - Unary minus: `-x` is a negation atom at the summand position; `a - b` is
   binary subtraction.
 - A summand may open with a sign applied to its **whole first chunk** via
@@ -365,17 +363,40 @@ b + 1 = 25      -- equation: solve for b
 x = 24          -- both a definition insert (a rule) and a fact
 ```
 
-**v1 propagation pipeline** for each equation:
+**Propagation pipeline** for each equation:
 
 1. Substitute known ground values into both sides.
 2. Simplify both sides via rules (§9).
-3. If one side is a single symbol, attempt **linear isolation** (v1's only
-   solving): `b + 1 = 25` → `b := 24`.
-4. If solved: append the definition, substitute the new ground value
-   through every definition, rule, and constraint in the store, and rewrite
-   to fixpoint.
-5. If not solvable by linear isolation: record as a **constraint** (§2) and
-   continue.
+3. Hand the simplified equation to the **solver** (below).
+4. If solved: insert the resulting definitions and substitute each new
+   ground value through every rule, assumption, and constraint in the
+   store, then rewrite to fixpoint.
+5. If unsolved: record as a **constraint** (§2), and re-attempt whenever
+   the store or solver capability changes.
+
+### 7.1 The solver
+
+The solver is a single interface with **staged capability**:
+
+```
+solve(equation, store) -> bindings | unsolved
+```
+
+Each stage is a complete, self-contained solver; each strictly extends the
+previous one. The design fixes the interface and the stage order — the
+milestones in [`ROADMAP.md`](../ROADMAP.md) build the stages in sequence:
+
+| Stage | Solves | Examples |
+|---|---|---|
+| S1 — substitution & linear isolation | `symbol = expr` with the symbol linearly isolable; ground facts | `b = 24`, `b + 1 = 25` |
+| S2 — polynomial solving | polynomial equations in one symbol, by degree | `x^2 + 3 x + 2 = 0`; `±`-branch selection against definitions (e.g. `x = 3` vs. the quadratic formula) |
+| S3 — systems & beyond | simultaneous equations, nonlinear cases | `x + y = 3; x - y = 1` |
+
+A returned binding set is a conjunction: each binding becomes a definition
+insert (§6) and propagates through the store. **`±` solutions** — when the
+solver returns branches, e.g. `(3, -1)` for a quadratic — are handled by
+inserting each branch as a candidate definition set and requiring
+consistency (§12); branch handling interacts with constraints per §19.
 
 Example trace:
 
@@ -388,9 +409,8 @@ Output:   b := 23
           x = 24
 ```
 
-**Full equation solving is a planned feature** (§17) but is not v1. The v1
-solver interface is `solve(equation) -> solved-bindings | unsolved`, and
-the future solver plugs into the same slot.
+The solver stages arrive in milestones; S1 is the first delivered, S2 and
+S3 slot into the same `solve()` interface without redesign.
 
 ---
 
@@ -444,8 +464,8 @@ Semantics:
   is rejected at definition time.
 - **Matching is up to commutativity/associativity** for `+` and `*`, with
   numeric-literal special cases (`0 + $x`, `1 * $x`). Without this, half of
-  algebra is invisible to patterns. (Full AC matching is a known hard area;
-  v1 implements the practical subset and §19 tracks its limits.)
+  algebra is invisible to patterns. (General AC matching is a known hard
+  area; §19 tracks the completeness limits of the implemented subset.)
 - **Guards** (§10) gate firing.
 - **Rules normalize rules.** When a rule is defined, its LHS and RHS are
   first run through the existing rule set, so rule A can feed rule B even
@@ -456,8 +476,8 @@ Semantics:
   ~1000). Hitting the cap is an error reported to stderr — that, plus guards,
   is the safety net against oscillating rules like `$x = $x + 1`.
 - **Directionality.** Rules fire LHS→RHS only. The reverse direction is a
-  separate explicit rule. v1 never searches both directions automatically
-  (that is proof search, §17).
+  separate explicit rule. Automatic bidirectional search is a proof-search
+  feature, out of the base engine (§17).
 - `:=` on a pattern clears all rules with that LHS; `=` appends. Appending
   several rules with the same LHS is how you express *alternative*
   simplification paths — they apply in definition order within the fixpoint
@@ -505,7 +525,7 @@ sqrt($x)^2 = $x where $x in REAL; $x >= 0
 
 ---
 
-## 11. Engine pipeline (v1)
+## 11. Engine pipeline
 
 Per statement, in order:
 
@@ -516,9 +536,10 @@ Per statement, in order:
 3. **Rules:** normalize LHS+RHS through the existing rules; insert
    (append for `=`, clear-then-insert for `:=`).
 4. **Assumptions:** insert into the assumption store.
-5. **Equations:** substitute → simplify → linear-isolate (§7). Solved:
-   insert the resulting definition and propagate the new ground value
-   through the whole store. Unsolved: record as constraint.
+5. **Equations:** substitute → simplify → `solve()` at the current
+   capability stage (§7.1). Solved: insert the resulting definitions and
+   propagate each new ground value through the whole store. Unsolved:
+   record as constraint.
 6. **Fixpoint rewrite** of every rule, assumption, and constraint.
 7. **Contradiction check** (§12).
 
@@ -534,8 +555,9 @@ Per statement, in order:
   metavariable in a guard, `where` on a `$`-free rule, missing include file,
   fixpoint step cap exceeded: all errors, stderr, non-zero exit in batch
   mode. (Include cycles are not errors — includes are idempotent, §4.)
-- v1 detects contradictions between ground values; full consistency
-  checking across the store is future work (§17).
+- Contradiction detection between ground values is immediate; full
+  consistency checking across the store grows with the solver stages
+  (§7.1) — see the milestones in [`ROADMAP.md`](../ROADMAP.md).
 
 Exit codes (batch): `0` success, `1` parse error, `2` contradiction,
 `3` runtime error (missing include, step cap).
@@ -606,8 +628,8 @@ liacas-core (library)
 ├── store        unified rules (:=/=, symbols and patterns), assumptions,
 │                constraints, sets, include tracking
 ├── engine       substitute -> solve/implicate -> rewrite to fixpoint (§11)
-├── solver       staged: v1 substitution + linear isolation;
-│                full solving plugs into the same interface later
+├── solver       staged capability: S1 substitution + linear isolation,
+│                S2 polynomial, S3 systems — one solve() interface
 └── render       AST -> round-trippable ASCII (§13)
 
 frontends
@@ -669,31 +691,14 @@ Output:  1             (5 is a literal != 0 -> provable -> fires)
 
 ---
 
-## 17. Roadmap
+## 17. Build order
 
-**v1 (this document's scope):**
-
-1. Whitespace-aware lexer; expression parser with §5 precedence.
-2. Unified rule store (definitions and pattern rules, §2) with `:=`/`=`
-   clear/append semantics.
-3. Substitution + linear-isolation solver slot.
-4. Pattern matcher (AC for `+`/`*`, consistent `$` binding) + guards +
-   fixpoint rewriter with step cap + rule normalization.
-5. Batch frontend: header/prompt protocol, `include` with globs and
-   idempotent loading, round-trippable renderer.
-6. REPL wrapper: internal-header model, `include`, `definitions`/
-   `definitions <symbol>`, `clear`/`clear <symbol>`, `save`.
-
-**Planned, later (same interfaces, bigger engines):**
-
-- Full equation solving: quadratics, systems, `±` branch selection against
-  definitions (e.g. `x = 3` against the quadratic formula).
-- Branch/proof search: applying all matching rules and keeping result *sets*,
-  with an output-contract extension.
-- Bidirectional rule search.
-- Assumption propagation and full store consistency checking.
-- Complete AC matching (the general AC-match problem), richer guard
-  predicate library.
+The design above is the complete system. It is built incrementally: each
+milestone in [`ROADMAP.md`](../ROADMAP.md) delivers a working, testable
+LiaCAS at a strictly larger capability, in dependency order, ending with
+the complete design. Capabilities staged in this document — the solver
+stages (§7.1), complete AC matching, proof search, assumption propagation —
+are milestone entries there, not version numbers here.
 
 ---
 
@@ -704,7 +709,7 @@ A summary table; the full reasoning for each decision lives in
 
 | # | Decision | Resolution |
 |---|---|---|
-| 1 | Implication depth | v1: substitution + single-symbol linear isolation. Full solving: future (§7, §17). |
+| 1 | Implication depth | Equations with compound LHS; the solver is one `solve()` interface with staged capability S1–S3 (§7.1, ROADMAP.md). |
 | 2 | Contradictions | Detect, report to stderr, reject the statement (store untouched) (§12). |
 | 3 | Fact language | Equations, compound LHS legal (§7). |
 | 4 | Pattern variable scope | `$` binds any subexpression, consistently within a pattern (§9). |
@@ -734,9 +739,9 @@ A summary table; the full reasoning for each decision lives in
    double spaces vs parentheses to guarantee round-tripping need to be
    pinned during implementation (§13).
 2. **AC-matching completeness** — which practical AC cases beyond flat
-   sums/products (nested, mixed literals) v1 must handle (§9).
+   sums/products (nested, mixed literals) the engine must handle (§9).
 3. **Expansion strategy for multi-definition symbols** — when a symbol has
-   several definitions (`x = e1` then `x = e2`), v1 requires the expanded
+   several definitions (`x = e1` then `x = e2`), the engine requires the expanded
    results to agree after simplification. Whether disagreement should also
    *drive solving* (feed the disagreement equation to the solver, §7) instead
    of only erroring is an open refinement.

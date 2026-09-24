@@ -7,6 +7,9 @@ LiaCAS is a Computer Algebra System, written in Zig.
 - **Design rationale:** [`docs/DECISIONS.md`](docs/DECISIONS.md) — an ADR
   log recording the context, alternatives, and reasoning behind each
   decision, so the design can be understood from a local clone alone.
+- **Roadmap:** [`ROADMAP.md`](ROADMAP.md) — unit milestones M1–M10 that
+  build the system incrementally; each milestone delivers a working,
+  testable LiaCAS at a strictly larger capability.
 - **Status:** design phase. The engine described in the design document is
   not implemented yet; `src/` currently holds the Zig project scaffold.
 

@@ -114,22 +114,23 @@ downstream.
 **Consequences.** Batch exit code 2 for contradictions; full store-wide
 consistency checking is deferred with the solver (§17). Spec: §12.
 
-## ADR-006: Facts are equations; v1 solving = substitution + linear isolation
+## ADR-006: Facts are equations; solver staged as S1–S3
 
 **Context.** Prompts carry "new information with implications for known
 definitions" — e.g. header `x := b + 1`, prompt `x = 24` should derive
-`b := 23`. How deep should v1 implication go?
+`b := 23`. How deep should implication go?
 
 **Decision.** The fact language is equations (compound LHS legal:
-`b + 1 = 25`). v1 propagates by substituting known ground values,
-simplifying, and — when one side is a single symbol — **linear
-isolation**. Unsolved equations are recorded as *constraints* for the
-future solver. Full equation solving is a planned feature behind the same
-`solve()` interface.
+`b + 1 = 25`). The solver is a single `solve(equation, store)` interface
+with **staged capability** (DESIGN §7.1): S1 substitution + linear
+isolation, S2 polynomial solving with `±`-branch selection, S3 systems.
+Unsolved equations are recorded as *constraints* and re-attempted as
+solver capability grows. The stages are built as milestones M5/M9/M10 of
+[`ROADMAP.md`](../ROADMAP.md); each strictly extends the previous.
 
 **Alternatives.**
 - Substitution-only: rejected — `b + 1 = 25` is too basic to fail on.
-- Full solving in v1: rejected — a full solver (quadratics, systems,
+- Full solver first: rejected — a full solver (quadratics, systems,
   `±`-branch selection) is a project on its own; the staged interface lets
   it slot in later without redesign.
 
@@ -273,8 +274,9 @@ patterns: `$x + 0 = $x` would not match `0 + a`.
 **Decision.** Matching is up to commutativity/associativity for `+` and
 `*`, with numeric-literal special cases (`0 + $x`, `1 * $x`).
 
-**Consequences.** General AC matching is a known hard area; v1 implements
-the practical subset and tracks completeness limits in §19. Spec: §9.
+**Consequences.** General AC matching is a known hard area; the engine
+implements the practical subset first and tracks completeness limits in
+DESIGN §19, with complete AC matching as a roadmap extension. Spec: §9.
 
 ## ADR-014: Fixpoint rewriting, deterministic, with step cap; rules normalize rules
 
@@ -293,8 +295,8 @@ branching): deferred with proof search — it changes the output contract
 and explodes combinatorially. One-pass application: rejected — chains
 are the point.
 
-**Consequences.** v1 is deterministic; branch search is roadmaped behind
-an output-contract extension. Spec: §9.
+**Consequences.** The base engine is deterministic; branch search is a
+roadmap extension behind an output-contract extension. Spec: §9.
 
 ## ADR-015: Multi-letter variables with `_` subscripts; reserved words excluded
 
@@ -374,8 +376,8 @@ multiplies: `(a + 1)2`.
 renderer) is the system; the batch frontend (stdin header+prompt →
 stdout store, errors to stderr with exit codes) is the primary interface,
 "a library that behaves like a CLI"; the REPL is a wrapper adding QOL
-only. The v1 solver is substitution + linear isolation; the full solver
-plugs into the same `solve()` slot later.
+only. The solver is one `solve()` interface with staged capability
+(ADR-006), built across milestones M5–M10.
 
 **Consequences.** Every feature is testable through batch alone; the
 REPL is thin enough to rewrite without touching semantics. Spec: §15.
